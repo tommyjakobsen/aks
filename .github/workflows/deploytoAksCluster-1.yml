@@ -1,0 +1,51 @@
+on: [push]
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@master
+    
+    - uses: azure/docker-login@v1
+      with:
+        login-server: tommyjakobsenaks.azurecr.io
+        username: ${{ secrets.acr_tommyjakobsenaks_username }}
+        password: ${{ secrets.acr_tommyjakobsenaks_password }}
+    
+    - name: Build and push image to ACR
+      id: build-image
+      run: |
+        docker build "$GITHUB_WORKSPACE/.docker" -f  ".docker/Dockerfile" -t tommyjakobsenaks.azurecr.io/akzdemo:${{ github.sha }}
+        docker push tommyjakobsenaks.azurecr.io/akzdemo:${{ github.sha }}
+    
+    - uses: azure/k8s-set-context@v1
+      with:
+         kubeconfig: ${{ secrets.aks_akzdemo_kubeConfig }}
+      id: login
+    
+    - name: Create namespace
+      run: |
+        namespacePresent=`kubectl get namespace | grep akzdemo80ed | wc -l`
+        if [ $namespacePresent -eq 0 ]
+        then
+            echo `kubectl create namespace akzdemo80ed`
+        fi
+
+    - uses: azure/k8s-create-secret@v1
+      with:
+        namespace: akzdemo80ed
+        container-registry-url: tommyjakobsenaks.azurecr.io
+        container-registry-username: ${{ secrets.acr_tommyjakobsenaks_username }}
+        container-registry-password: ${{ secrets.acr_tommyjakobsenaks_password }}
+        secret-name: akzdemodockerauth
+       
+    - uses: azure/k8s-deploy@v1
+      with:
+        namespace: akzdemo80ed
+        manifests: |
+          manifests/deployment-1.yml
+          manifests/service-1.yml
+          manifests/ingress.yml
+        images: |
+          tommyjakobsenaks.azurecr.io/akzdemo:${{ github.sha }}
+        imagepullsecrets: |
+          akzdemodockerauth
